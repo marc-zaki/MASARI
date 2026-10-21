@@ -460,27 +460,65 @@ async def api_scraper_status(request: Request):
         "finished_at": scraper_state.get("finished_at"),
     })
 
-CS_KEYWORDS = [
-    r"\bpython\b", r"\bprogramming\b", r"\bcode\b", r"\bcoding\b", r"\bsoftware\b", 
-    r"\bdeveloper\b", r"\bjava\b", r"\bjavascript\b", r"\bc\+\+\b", r"\bc#\b", r"\bhtml\b", 
-    r"\bcss\b", r"\breact\b", r"\bnode\b", r"\bweb dev\b", r"\bweb development\b", 
-    r"\bmachine learning\b", r"\bartificial intelligence\b", r"\bdata science\b", 
-    r"\bdatabase\b", r"\bsql\b", r"\bcybersecurity\b", r"\bcyber security\b", 
-    r"\bnetwork\b", r"\balgorithm\b", r"\bdata structures\b", r"\bcloud\b", r"\baws\b", 
-    r"\bgit\b", r"\blinux\b", r"\bdevops\b", r"\bdocker\b", r"\bkubernetes\b", 
-    r"\bflutter\b", r"\bandroid\b", r"\bios\b", r"\bswift\b", r"\bkotlin\b", 
-    r"\btypescript\b", r"\bruby\b", r"\bphp\b", r"\bgo\blang\b", r"\bgolang\b", 
-    r"\brust\b", r"\bcompiler\b", r"\boperating system\b", r"\bcomputer science\b",
-    r"\bfront\b-?end\b", r"\bback\b-?end\b", r"\bfull\b-?stack\b", r"\bdeep learning\b",
-    r"\bneural network\b", r"\bdata analytics\b", r"\bux/ui\b", r"\bagile\b"
-]
+youtube_state = {"status": "idle", "log": [], "inserted": 0, "found": 0, "started_at": None, "finished_at": None}
 
-def is_cs_related(title, description):
-    text_to_scan = f"{title} {description}".lower()
-    for kw in CS_KEYWORDS:
-        if re.search(kw, text_to_scan):
-            return True
-    return False
+def _run_youtube_import_background(db, max_queries):
+    global youtube_state
+    try:
+        import youtube_importer
+        youtube_state["status"] = "running"
+        result = youtube_importer.run_import(max_queries, log=youtube_state["log"].append)
+        youtube_state["found"] = result["found"]
+        youtube_state["inserted"] = result["inserted"]
+        youtube_state["log"].append(f"[YouTube] ✅ Done! Kept {result['found']} CS items, inserted {result['inserted']} new ones.")
+        youtube_state["status"] = "done"
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        ai_core.load_and_train_model(db)
+    except Exception as exc:
+        youtube_state["log"].append(f"[YouTube] ❌ Error: {exc}")
+        youtube_state["status"] = "error"
+    finally:
+        youtube_state["finished_at"] = datetime.utcnow().isoformat()
+
+@router.post("/api/admin/import_youtube")
+async def api_import_youtube(request: Request, background_tasks: BackgroundTasks):
+    if not await require_admin(request):
+        return JSONResponse({"success": False, "error": "Unauthorized"}, status_code=401)
+
+    global youtube_state
+    if youtube_state.get("status") == "running":
+        return JSONResponse({"success": False, "error": "YouTube import is already running."}, status_code=400)
+    if not os.environ.get("YOUTUBE_API_KEY"):
+        return JSONResponse({"success": False, "error": "YOUTUBE_API_KEY is not configured."}, status_code=400)
+
+    try:
+        data = await request.json()
+    except:
+        data = {}
+    # Each query costs ~300 quota units of the 10,000/day default
+    max_queries = max(1, min(int(data.get("max_queries", 10) or 10), 30))
+
+    youtube_state = {
+        "status": "starting",
+        "log": [f"[YouTube] Initializing import ({max_queries} queries)..."],
+        "inserted": 0,
+        "found": 0,
+        "started_at": datetime.utcnow().isoformat(),
+        "finished_at": None,
+    }
+    db = request.app.state.mongo_db
+    background_tasks.add_task(_run_youtube_import_background, db, max_queries)
+    return JSONResponse({"success": True, "message": "YouTube import started in background."})
+
+@router.get("/api/admin/youtube_status")
+async def api_youtube_status(request: Request):
+    if not await require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return JSONResponse(youtube_state)
+
+from cs_filter import is_cs_related
 
 _CSV_COLUMN_MAP = {
     "title": "title", "name": "title", "course_name": "title", "course title": "title", "coursetitle": "title",

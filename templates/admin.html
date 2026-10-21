@@ -178,6 +178,48 @@
                         </p>
                     </div>
 
+                    <!-- YouTube Import Card -->
+                    <div class="glass-panel"
+                        style="padding: 1.75rem; border-radius: 16px; border: 1px solid var(--border-glass);">
+                        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
+                            <div
+                                style="width: 40px; height: 40px; background: linear-gradient(135deg, #ef4444, #b91c1c); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                                <i data-lucide="youtube" style="width: 20px; height: 20px; color: white;"></i>
+                            </div>
+                            <div>
+                                <h4 style="margin: 0; font-weight: 700; color: var(--text-main); font-size: 1.05rem;">
+                                    YouTube Courses</h4>
+                                <p style="margin: 0; font-size: 0.8rem; color: var(--text-muted);">Import free CS
+                                    playlists &amp; full-length tutorials</p>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1rem;">
+                            <span style="font-size: 0.8rem; color: var(--text-muted);">Status:</span>
+                            <span id="youtube-status-badge"
+                                style="padding: 0.2rem 0.6rem; border-radius: 20px; font-size: 0.75rem; font-weight: 700; background: rgba(100,116,139,0.2); color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em;">Idle</span>
+                        </div>
+
+                        <div id="youtube-log"
+                            style="display: none; background: #0f172a; border-radius: 10px; padding: 0.75rem; margin-bottom: 1rem; font-family: monospace; font-size: 0.78rem; color: #94a3b8; height: 160px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.07); line-height: 1.6;">
+                        </div>
+
+                        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+                            <label style="font-size: 0.8rem; color: var(--text-muted);">Queries
+                                <input id="youtube-max-queries" type="number" min="1" max="30" value="10"
+                                    class="search-input" style="width: 70px; padding: 0.4rem 0.5rem; margin-left: 0.3rem;">
+                            </label>
+                            <button id="run-youtube-btn" onclick="runYoutubeImport()" class="btn btn-primary"
+                                style="flex: 1; min-width: 130px; display: flex; align-items: center; justify-content: center; gap: 0.4rem; background: linear-gradient(135deg, #ef4444, #b91c1c); border: none;">
+                                <i data-lucide="download" style="width: 15px; height: 15px;"></i> Import from YouTube
+                            </button>
+                        </div>
+                        <p style="margin-top: 0.75rem; font-size: 0.76rem; color: var(--text-muted); line-height: 1.5;">
+                            Each query uses ~300 of the 10,000 daily API quota units. Non-CS results are filtered out
+                            and duplicates are skipped.
+                        </p>
+                    </div>
+
                     <!-- CSV Upload Card -->
                     <div class="glass-panel"
                         style="padding: 1.75rem; border-radius: 16px; border: 1px solid var(--border-glass);">
@@ -647,8 +689,8 @@
     // ─── Live Scraper ────────────────────────────────────────────────
     let scraperPollInterval = null;
 
-    function setScraperBadge(status) {
-        const badge = document.getElementById('scraper-status-badge');
+    function setScraperBadge(status, badgeId = 'scraper-status-badge') {
+        const badge = document.getElementById(badgeId);
         const colors = {
             idle: { bg: 'rgba(100,116,139,0.2)', color: '#94a3b8' },
             starting: { bg: 'rgba(251,191,36,0.2)', color: '#fbbf24' },
@@ -662,8 +704,8 @@
         badge.textContent = status.toUpperCase();
     }
 
-    function appendScraperLog(lines) {
-        const logEl = document.getElementById('scraper-log');
+    function appendScraperLog(lines, logId = 'scraper-log') {
+        const logEl = document.getElementById(logId);
         logEl.style.display = 'block';
         logEl.innerHTML = lines.map(l => `<div>${escapeAdminHtml(l)}</div>`).join('');
         logEl.scrollTop = logEl.scrollHeight;
@@ -706,6 +748,78 @@
                     });
             }
         );
+    }
+
+    // ─── YouTube Import ──────────────────────────────────────────────
+    let youtubePollInterval = null;
+    const YT_BTN_IDLE = '<i data-lucide="download" style="width:15px;height:15px;"></i> Import from YouTube';
+
+    function resetYoutubeBtn() {
+        const btn = document.getElementById('run-youtube-btn');
+        btn.disabled = false;
+        btn.innerHTML = YT_BTN_IDLE;
+        if (window.lucide) lucide.createIcons();
+    }
+
+    function runYoutubeImport() {
+        const maxQueries = parseInt(document.getElementById('youtube-max-queries').value, 10) || 10;
+        showCustomConfirm(
+            "Import YouTube Courses",
+            `This will run ${maxQueries} topic searches (~${maxQueries * 300} API quota units) and add new CS courses to the catalog. Continue?`,
+            () => {
+                const btn = document.getElementById('run-youtube-btn');
+                btn.disabled = true;
+                btn.innerHTML = '<i data-lucide="loader-2" style="width:15px;height:15px;" class="spin"></i> Starting...';
+                if (window.lucide) lucide.createIcons();
+
+                fetch('/api/admin/import_youtube', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ max_queries: maxQueries })
+                })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            setScraperBadge('starting', 'youtube-status-badge');
+                            if (youtubePollInterval) clearInterval(youtubePollInterval);
+                            youtubePollInterval = setInterval(pollYoutubeStatus, 2500);
+                        } else {
+                            showCustomAlert("Error", data.error);
+                            resetYoutubeBtn();
+                        }
+                    })
+                    .catch(err => {
+                        showCustomAlert("Error", "Request failed: " + err);
+                        resetYoutubeBtn();
+                    });
+            }
+        );
+    }
+
+    function pollYoutubeStatus() {
+        fetch('/api/admin/youtube_status')
+            .then(r => r.json())
+            .then(data => {
+                setScraperBadge(data.status, 'youtube-status-badge');
+                if (data.log && data.log.length) appendScraperLog(data.log, 'youtube-log');
+
+                if (data.status === 'running' || data.status === 'starting') {
+                    const btn = document.getElementById('run-youtube-btn');
+                    btn.disabled = true;
+                    btn.innerHTML = '<i data-lucide="loader-2" style="width:15px;height:15px;" class="spin"></i> Importing...';
+                    if (window.lucide) lucide.createIcons();
+                } else {
+                    clearInterval(youtubePollInterval);
+                    youtubePollInterval = null;
+                    resetYoutubeBtn();
+                    if (data.status === 'done') {
+                        showCustomAlert("YouTube Import Complete",
+                            `✅ Kept ${data.found} CS items — inserted ${data.inserted} new courses. The search index has been rebuilt.`);
+                    } else if (data.status === 'error') {
+                        showCustomAlert("YouTube Import Error", "The import failed. Check the log for details.");
+                    }
+                }
+            });
     }
 
     function pollScraperStatus() {

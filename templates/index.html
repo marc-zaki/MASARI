@@ -29,6 +29,7 @@
                         <option value="harvard" {% if request.query_params.get('provider') == 'harvard' %}selected{% endif %}>Harvard</option>
                         <option value="google" {% if request.query_params.get('provider') == 'google' %}selected{% endif %}>Google</option>
                         <option value="stanford" {% if request.query_params.get('provider') == 'stanford' %}selected{% endif %}>Stanford</option>
+                        <option value="youtube" {% if request.query_params.get('provider') == 'youtube' %}selected{% endif %}>YouTube (Free)</option>
                     </select>
                     <select name="difficulty" class="search-input catalog-filter-select" onchange="this.form.submit()">
                         <option value="">All Levels</option>
@@ -122,7 +123,11 @@
                     <i data-lucide="zap" style="width:11px;height:11px;display:inline-block;vertical-align:middle;"></i> Analyze
                 </div>
                 <div class="card-content">
-                    <div class="card-category">{{ course.provider }}</div>
+                    <div class="card-category">{{ course.provider }}
+                        {% if 'youtube' in (course.provider or '')|lower %}
+                        <span style="margin-left: 0.4rem; padding: 0.1rem 0.45rem; border-radius: 6px; background: rgba(239,68,68,0.15); color: #ef4444; font-size: 0.7rem; font-weight: 700;">FREE</span>
+                        {% endif %}
+                    </div>
                     <div class="card-title">{{ course.title }}</div>
                     <div class="card-description">
                         {{ course.content_text[:140] + '...' if course.content_text|length > 140 else
